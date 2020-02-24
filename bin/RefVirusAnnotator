@@ -1,0 +1,303 @@
+#!/usr/bin/env python2.7
+from GRAViTy.RefVirusAnnotator import RefVirusAnnotator
+from GRAViTy.Utilities.str2bool import str2bool
+from GRAViTy.Utilities.CheckInput import check_FILEPATH, check_PERCENT, check_PROB, check_POS, check_POSINTEGER, check_NONNEGINTEGER, check_NONNEG
+import optparse, os, multiprocessing
+
+import textwrap
+class IndentedHelpFormatterWithNL(optparse.IndentedHelpFormatter):
+	def format_description(self, description):
+		if not description: return ""
+		desc_width = self.width - self.current_indent
+		indent = " "*self.current_indent
+		# the above is still the same
+		bits = description.split('\n')
+		formatted_bits = [
+			textwrap.fill(bit,
+				desc_width,
+				initial_indent=indent,
+				subsequent_indent=indent)
+			for bit in bits]
+		result = "\n".join(formatted_bits) + "\n"
+		return result
+	
+	def format_option(self, option):
+		# The help for each option consists of two parts:
+		#	 * the opt strings and metavars
+		#	 eg. ("-x", or "-fFILENAME, --file=FILENAME")
+		#	 * the user-supplied help string
+		#	 eg. ("turn on expert mode", "read data from FILENAME")
+		#
+		# If possible, we write both of these on the same line:
+		#	 -x		turn on expert mode
+		#
+		# But if the opt string list is too long, we put the help
+		# string on a second line, indented to the same column it would
+		# start in if it fit on the first line.
+		#	 -fFILENAME, --file=FILENAME
+		#			 read data from FILENAME
+		result = []
+		opts = self.option_strings[option]
+		opt_width = self.help_position - self.current_indent - 2
+		if len(opts) > opt_width:
+			opts = "%*s%s\n" % (self.current_indent, "", opts)
+			indent_first = self.help_position
+		else: # start help on same line as opts
+			opts = "%*s%-*s	" % (self.current_indent, "", opt_width, opts)
+			indent_first = 0
+		result.append(opts)
+		if option.help:
+			help_text = self.expand_default(option)
+			# Everything is the same up through here
+			help_lines = []
+			for para in help_text.split("\n"):
+				help_lines.extend(textwrap.wrap(para, self.help_width))
+			# Everything is the same after here
+			result.append("%*s%s\n" % (
+				indent_first, "", help_lines[0]))
+			result.extend(["%*s%s\n" % (self.help_position, "", line)
+				for line in help_lines[1:]])
+		elif opts[-1] != "\n":
+			result.append("\n")
+		return "".join(result)
+
+def main():
+	parser = optparse.OptionParser(	usage = "usage: %prog [options]",
+					version = "%prog 1.1.0",
+					formatter = IndentedHelpFormatterWithNL())
+	
+	parser.add_option(	'--GenomeSeqFile',
+				dest	= "GenomeSeqFile",
+				help	= "Full path to the genome sequence GenBank file.",
+				metavar	= "FILEPATH",
+				type	= "string",
+				action	= "callback",
+				callback= check_FILEPATH,
+	)
+	parser.add_option(	'--ShelveDir',
+				dest	= "ShelveDir",
+				help	= "Full path to the shelve directory, storing GRAViTy outputs.",
+				metavar	= "DIRECTORYPATH",
+				type	= "string",
+	)
+	
+	VirusAnnotationGroup 	= optparse.OptionGroup(	parser		= parser,
+							title		= "Reference virus annotation options",
+							description	= "Virus genomes are 6-framed translated and are scanned against the PPHMM database, using HMMER (hmmscan). "
+									  "Two types of information are collected: PPHMM hit scores (PPHMM signatures) and hit locations (PPHMM LOCATION signatures). ")
+	#VirusAnnotationGroup.add_option('--SeqLength_Cutoff',
+	#				dest	= "SeqLength_Cutoff",
+	#				default	= 0,
+	#				help	= "Sequences with length < LENGTH nt will be ignored [default: %default]",
+	#				metavar	= "LENGTH",
+	#				type	= "int",
+	#				action	= "callback",
+	#				callback= check_NONNEGINTEGER,
+	#)
+	VirusAnnotationGroup.add_option('--AnnotateIncompleteGenomes',
+					dest	= "AnnotateIncompleteGenomes",
+					default	= False,
+					help	= "Annotate all viral genomes if True, otherwise only complete genomes. [default: %default]",
+					metavar	= "BOOLEAN",
+					type	= "choice",
+					choices	= ["True", "False",],
+	)
+	VirusAnnotationGroup.add_option('--HMMER_N_CPUs',
+					dest	= "HMMER_N_CPUs",
+					default	= multiprocessing.cpu_count(),
+					help	= "Number of threads (CPUs) to use in the hmmscan search. [default: %default - all threads]",
+					metavar	= "THREADS",
+					type	= "int",
+					action	= "callback",
+					callback= check_POSINTEGER,
+	)
+	VirusAnnotationGroup.add_option('--HMMER_C_EValue_Cutoff',
+					dest	= "HMMER_C_EValue_Cutoff",
+					default	= 1E-3,
+					help	= "Threshold for HMM-protein similarity detection. "
+						  "A hit with an E-value > E-VALUE will be ignored. [default: %default]",
+					metavar	= "E-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	VirusAnnotationGroup.add_option('--HMMER_HitScore_Cutoff',
+					dest	= "HMMER_HitScore_Cutoff",
+					default	= 0,
+					help	= "Threshold for HMM-protein similarity detection. "
+						  "A hit with a score < SCORE will be ignored. [default: %default]",
+					metavar	= "SCORE",
+					type	= "float",
+					action	= "callback",
+					callback= check_NONNEG,
+	)
+	parser.add_option_group(VirusAnnotationGroup)
+	
+	RemoveSingletonPPHMMGroup 	= optparse.OptionGroup(	parser		= parser,
+								title		= "Remove singleton PPHMM options",
+								description	= "Remove singleton PPHMMs (PPHMM that show similarity to only one virus) from the database. "
+										  "Note that some singleton PPHMMs may be informative, in particular those that show similarity to the only representative of its taxonomic group (N = 1). "
+										  "Sometimes, a taxonomic group only has a few members. Singleton PPHMMs associated with those taxonomic groups can also be informative. "
+										  "Some viruses (which may belong to a large taxonomic group) may exhibit similarity to singleton PPHMMs excluively. "
+										  "Thus removing singleton PPHMMs can be dangerous. "
+										  "This action modifies the PPHMM database permanently. Use with caution. "
+										  )
+	RemoveSingletonPPHMMGroup.add_option(	'--RemoveSingletonPPHMMs',
+						dest	= "RemoveSingletonPPHMMs",
+						default	= False,
+						help	= "Remove singleton PPHMMs from the database if True. [default: %default]",
+						metavar	= "BOOLEAN",
+						type	= "choice",
+						choices	= ["True", "False",],
+	)
+	RemoveSingletonPPHMMGroup.add_option(	'--N_VirusesOfTheClassToIgnore',
+						dest	= "N_VirusesOfTheClassToIgnore",
+						default	= 1,
+						help	= "When 'RemoveSingletonPPHMMs' == TRUE, singleton PPHMMs are removed from the PPHMM database "
+							  "only if they show similarity to viruses that belong to taxonomic groups with more than NUMBER members. [default: %default]",
+						metavar	= "NUMBER",
+						type	= "int",
+						action	= "callback",
+						callback= check_POSINTEGER,
+	)
+	parser.add_option_group(RemoveSingletonPPHMMGroup)
+	
+	PPHMMSortingGroup 	= optparse.OptionGroup(	parser		= parser,
+							title		= "PPHMM sorting options",
+							description	= "Sort PPHMMs in the table and the database based on their pairiwse similarity and their presence/absence patterns in the viruses. "
+									  "PPHMM pairwise similarity scores were determined by HHsuite (hhsearch), and PPHMM clustering was performed by the MCL algorithm. "
+									  "This action modifies the PPHMM database permanently. Use with caution. ")
+	PPHMMSortingGroup.add_option(	'--PPHMMSorting',
+					dest	= "PPHMMSorting",
+					default	= False,
+					help	= "Sort PPHMMs if True. [default: %default]",
+					metavar	= "BOOLEAN",
+					type	= "choice",
+					choices	= ["True", "False",],
+	)
+	
+	PPHMMSortingGroup.add_option(	'--HHsuite_evalue_Cutoff',
+					dest	= "HHsuite_evalue_Cutoff",
+					default	= 1E-3,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with an E-value > E-VALUE will be ignored. [default: %default]",
+					metavar	= "E-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	PPHMMSortingGroup.add_option(	'--HHsuite_pvalue_Cutoff',
+					dest	= "HHsuite_pvalue_Cutoff",
+					default	= 0.05,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a p-value > P-VALUE will be ignored. [default: %default]",
+					metavar	= "P-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PROB,
+	)
+	PPHMMSortingGroup.add_option(	'--HHsuite_N_CPUs',
+					dest	= "HHsuite_N_CPUs",
+					default	= multiprocessing.cpu_count(),
+					help	= "Number of threads (CPUs) to use in the hhsearch search. [default: %default - all threads]",
+					metavar	= "THREADS",
+					type	= "int",
+					action	= "callback",
+					callback= check_POSINTEGER,
+	)
+	PPHMMSortingGroup.add_option(	'--HHsuite_QueryCoverage_Cutoff',
+					dest	= "HHsuite_QueryCoverage_Cutoff",
+					default	= 75,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a query coverage > COVERAGE will be ignored. [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	PPHMMSortingGroup.add_option(	'--HHsuite_SubjectCoverage_Cutoff',
+					dest	= "HHsuite_SubjectCoverage_Cutoff",
+					default	= 75,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a subject coverage > COVERAGE will be ignored. [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	
+	PPHMMSortingGroup.add_option(	'--PPHMMClustering_MCLInflation',
+					dest	= "PPHMMClustering_MCLInflation",
+					default	= 2,
+					help	= "Cluster granularity. Increasing INFLATION will increase cluster granularity. [default: %default]",
+					metavar	= "INFLATION",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	parser.add_option_group(PPHMMSortingGroup)
+	
+	options, arguments = parser.parse_args()
+	
+	print "Input for RefVirusAnnotator:"
+	print "="*100
+	print "Main input"
+	print "-"*50
+	print "GenomeSeqFile: %s"		%options.GenomeSeqFile
+	print "ShelveDir: %s"			%options.ShelveDir
+	
+	print "\n"
+	print "Reference virus annotation options"
+	print "-"*50
+	#print "SeqLength_Cutoff: %s"		%options.SeqLength_Cutoff
+	print "AnnotateIncompleteGenomes: %s"	%options.AnnotateIncompleteGenomes
+	print "HMMER_N_CPUs: %s"		%options.HMMER_N_CPUs
+	print "HMMER_C_EValue_Cutoff: %s"	%options.HMMER_C_EValue_Cutoff
+	print "HMMER_HitScore_Cutoff: %s"	%options.HMMER_HitScore_Cutoff
+	
+	print "\n"
+	print "Remove singleton PPHMM options"
+	print "-"*50
+	print "RemoveSingletonPPHMMs: %s"	%options.RemoveSingletonPPHMMs
+	print "N_VirusesOfTheClassToIgnore: %s"	%options.N_VirusesOfTheClassToIgnore
+	
+	print "\n"
+	print "PPHMM sorting options"
+	print "-"*50
+	print "PPHMMSorting: %s"		%options.PPHMMSorting
+	print "HHsuite_evalue_Cutoff: %s"	%options.HHsuite_evalue_Cutoff
+	print "HHsuite_pvalue_Cutoff: %s"	%options.HHsuite_pvalue_Cutoff
+	print "HHsuite_N_CPUs: %s"		%options.HHsuite_N_CPUs
+	print "HHsuite_QueryCoverage_Cutoff: %s"%options.HHsuite_QueryCoverage_Cutoff
+	print "HHsuite_SubjectCoverage_Cutoff: %s"%options.HHsuite_SubjectCoverage_Cutoff
+	
+	print "PPHMMClustering_MCLInflation: %s"%options.PPHMMClustering_MCLInflation
+	print "="*100
+	
+	RefVirusAnnotator (
+		GenomeSeqFile = options.GenomeSeqFile,
+		ShelveDir = options.ShelveDir,
+
+		#SeqLength_Cutoff = options.SeqLength_Cutoff,
+		SeqLength_Cutoff = 0,
+		IncludeIncompleteGenomes = str2bool(options.AnnotateIncompleteGenomes),
+		HMMER_N_CPUs = options.HMMER_N_CPUs,
+		HMMER_C_EValue_Cutoff = options.HMMER_C_EValue_Cutoff,
+		HMMER_HitScore_Cutoff = options.HMMER_HitScore_Cutoff,
+
+		RemoveSingletonPPHMMs = str2bool(options.RemoveSingletonPPHMMs),
+		N_VirusesOfTheClassToIgnore = options.N_VirusesOfTheClassToIgnore,
+
+		PPHMMSorting = str2bool(options.PPHMMSorting),
+		HHsuite_evalue_Cutoff = options.HHsuite_evalue_Cutoff,
+		HHsuite_pvalue_Cutoff = options.HHsuite_pvalue_Cutoff,
+		HHsuite_N_CPUs = options.HHsuite_N_CPUs,
+		HHsuite_QueryCoverage_Cutoff = options.HHsuite_QueryCoverage_Cutoff,
+		HHsuite_SubjectCoverage_Cutoff = options.HHsuite_SubjectCoverage_Cutoff,
+
+		PPHMMClustering_MCLInflation = options.PPHMMClustering_MCLInflation,
+		)
+
+if __name__ == '__main__':
+	main()
+

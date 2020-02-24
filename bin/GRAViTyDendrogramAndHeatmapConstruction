@@ -1,0 +1,327 @@
+#!/usr/bin/env python2.7
+from GRAViTy.GRAViTyDendrogramAndHeatmapConstruction import GRAViTyDendrogramAndHeatmapConstruction
+from GRAViTy.Utilities.str2bool import str2bool
+from GRAViTy.Utilities.CheckInput import check_FILEPATH, check_PROB, check_POSINTEGER, check_NONNEG
+import optparse, os, multiprocessing
+
+import textwrap
+class IndentedHelpFormatterWithNL(optparse.IndentedHelpFormatter):
+	def format_description(self, description):
+		if not description: return ""
+		desc_width = self.width - self.current_indent
+		indent = " "*self.current_indent
+		# the above is still the same
+		bits = description.split('\n')
+		formatted_bits = [
+			textwrap.fill(bit,
+				desc_width,
+				initial_indent=indent,
+				subsequent_indent=indent)
+			for bit in bits]
+		result = "\n".join(formatted_bits) + "\n"
+		return result
+	
+	def format_option(self, option):
+		# The help for each option consists of two parts:
+		#	 * the opt strings and metavars
+		#	 eg. ("-x", or "-fFILENAME, --file=FILENAME")
+		#	 * the user-supplied help string
+		#	 eg. ("turn on expert mode", "read data from FILENAME")
+		#
+		# If possible, we write both of these on the same line:
+		#	 -x		turn on expert mode
+		#
+		# But if the opt string list is too long, we put the help
+		# string on a second line, indented to the same column it would
+		# start in if it fit on the first line.
+		#	 -fFILENAME, --file=FILENAME
+		#			 read data from FILENAME
+		result = []
+		opts = self.option_strings[option]
+		opt_width = self.help_position - self.current_indent - 2
+		if len(opts) > opt_width:
+			opts = "%*s%s\n" % (self.current_indent, "", opts)
+			indent_first = self.help_position
+		else: # start help on same line as opts
+			opts = "%*s%-*s	" % (self.current_indent, "", opt_width, opts)
+			indent_first = 0
+		result.append(opts)
+		if option.help:
+			help_text = self.expand_default(option)
+			# Everything is the same up through here
+			help_lines = []
+			for para in help_text.split("\n"):
+				help_lines.extend(textwrap.wrap(para, self.help_width))
+			# Everything is the same after here
+			result.append("%*s%s\n" % (
+				indent_first, "", help_lines[0]))
+			result.extend(["%*s%s\n" % (self.help_position, "", line)
+				for line in help_lines[1:]])
+		elif opts[-1] != "\n":
+			result.append("\n")
+		return "".join(result)
+
+def main():
+	parser = optparse.OptionParser(	usage = "usage: %prog [options]",
+					version = "%prog 1.1.0",
+					formatter = IndentedHelpFormatterWithNL())
+	
+	parser.add_option(	'--ShelveDir',
+				dest	= "ShelveDir",
+				help	= "Full path to the shelve directory, storing GRAViTy outputs.",
+				metavar	= "DIRECTORYPATH",
+				type	= "string",
+	)
+	parser.add_option(	'--IncludeIncompleteGenomes',
+				dest	= "IncludeIncompleteGenomes",
+				default	= False,
+				help	= "Include incomplete virus genomes in the dendrogram and heatmap if True. [default: %default]",
+				metavar	= "BOOLEAN",
+				type	= "choice",
+				choices	= ["True", "False",],
+	)
+	
+	SimilarityMeasurementGroup = optparse.OptionGroup(	parser		= parser,
+								title		= "Virus (dis)similarity measurement options",
+								description	= "Unlike in many traditional approaches that represent a virus using its molecular sequences, "
+										  "in GRAViTy, a virus is represented by 3 signatures: a PPHMM signature, a PPHMM LOCATION signature, and a GOM signature. "
+										  "For each virus pair, generalised Jaccard similarity scores (GJ) between their PPHMM signatures (GJ_P), PPHMM LOCATION signatures (GJ_L), and GOM signatures (GJ_G) are computed. "
+										  "An overall similarity between a pair of viruses is computed based on these 3 quantities. "
+										  "Various schemes of overall similarity measurement are implemented in GRAViTy, specified by using 'SimilarityMeasurementScheme' argument. "
+										  "See help text of 'SimilarityMeasurementScheme' for more details. "
+										  "The degree of overall similarity (S) is ranging between 0 and 1. "
+										  "An overall distance (D) between a pair of viruses is 1 - S, thus again ranging between 0 and 1."
+										  "In addition, GRAViTy allows users to transform the overall distance as well, governed by parameter 'p'. "
+										  "See the help text of 'p' for more details.",
+										  )
+	SimilarityMeasurementGroup.add_option(	'--SimilarityMeasurementScheme',
+						dest	= "SimilarityMeasurementScheme",
+						default	= "PG",
+						help	= "Virus similarity measurement SCHEMEs. [default: %default]\n"
+							  "If SCHEME = 'P', an overall similarity between two viruses is their GJ_P.\n"
+							  "If SCHEME = 'L', an overall similarity between two viruses is their GJ_L.\n"
+							  "If SCHEME = 'G', an overall similarity between two viruses is their GJ_G.\n"
+							  "If SCHEME = 'PG', an overall similarity between two viruses is a geometric mean - or a 'composite generalised Jaccard score' (CGJ) - of their GJ_P and GJ_G.\n"
+							  "If SCHEME = 'PL', an overall similarity between two viruses is a geometric mean - or a 'composite generalised Jaccard score' (CGJ) - of their GJ_P and GJ_L.",
+						metavar	= "SCHEME",
+						type	= "choice",
+						choices	= ["P", "G", "L", "PG", "PL"],
+	)
+	SimilarityMeasurementGroup.add_option(	'--p',
+						dest	= "p",
+						default	= 1,
+						help	= "Distance transformation P coefficient, 0 <= P. [default: %default]\n"
+							  "D = 1 - S**P.\n"
+							  "If P = 1, no distance transformation is applied.\n"
+							  "If P > 1, shallow branches will be stretched out so shallow splits can be seen more clearly.\n"
+							  "If p < 1, deep branches are stretch out so that deep splits can be seen more clearly.\n"
+							  "If p = 0, the entire dendrogram will be reduced to a single branch (root), with all taxa forming a polytomy clade at the tip of the dendrogram.\n"
+							  "If p = Inf, the resultant dendrogram will be star-like, with all taxa forming a polytomy clade at the root.",
+						metavar	= "P",
+						type	= "float",
+						action	= "callback",
+						callback= check_NONNEG,
+	)
+	parser.add_option_group(SimilarityMeasurementGroup)
+	
+	DendrogramConstructionGroup = optparse.OptionGroup(	parser		= parser,
+								title		= "Dendrogram construction options",
+								description	= "GRAViTy can generate a (bootstrapped) dendrogram based on the pairwise distance matrix using a hierarchical clustering algorithm. "
+										  "Various algorithms of hierarchical clustering are implemented in GRAViTy, specified by using 'Dendrogram_LinkageMethod' argument. "
+										  "See the help text of 'Dendrogram_LinkageMethod' for more details.")
+	DendrogramConstructionGroup.add_option(	'--Dendrogram',
+						dest	= "Dendrogram",
+						default	= True,
+						help	= "Construct dendrogram if True. [default: %default]",
+						metavar	= "BOOLEAN",
+						type	= "choice",
+						choices	= ["True", "False",],
+	)
+	DendrogramConstructionGroup.add_option(	'--Dendrogram_LinkageMethod',
+						dest	= "Dendrogram_LinkageMethod",
+						default	= "average",
+						help	= "LINKAGE for dendrogram construction. [default: %default]\n"
+							  "If LINKAGE = 'single', the nearest point algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'complete', the farthest point algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'average', the UPGMA algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'weighted', the WPGMA algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'centroid', the UPGMC algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'median', the WPGMC algorithm is used to cluster viruses and compute cluster distances.\n"
+							  "If LINKAGE = 'ward', the incremental algorithm is used to cluster viruses and compute cluster distances.",
+						metavar	= "LINKAGE",
+						type	= "choice",
+						choices	= ["single", "complete", "average", "weighted", "centroid", "median", "ward"],
+	)
+	
+	DendrogramConstructionGroup.add_option(	'--Bootstrap',
+						dest	= "Bootstrap",
+						default	= True,
+						help	= "Perform bootstrapping if True. [default: %default]",
+						metavar	= "BOOLEAN",
+						type	= "choice",
+						choices	= ["True", "False",],
+	)
+	DendrogramConstructionGroup.add_option(	'--N_Bootstrap',
+						dest	= "N_Bootstrap",
+						default	= 10,
+						help	= "The number of pseudoreplicate datasets by resampling. [default: %default]",
+						metavar	= "NUMBER",
+						type	= "int",
+						action	= "callback",
+						callback= check_POSINTEGER,
+	)
+	DendrogramConstructionGroup.add_option(	'--Bootstrap_method',
+						dest	= "Bootstrap_method",
+						default	= "booster",
+						help	= "Two METHODs for tree summary construction are implemented in GRAViTy. [default: %default]"
+							  "if METHOD = 'sumtrees', SumTrees (Sukumaran, J & MT Holder, 2010, Bioinformatics; https://dendropy.org/programs/sumtrees.html) will be used to summarize non-parameteric bootstrap support for splits on the best estimated dendrogram. The calculation is based on the standard Felsenstein bootstrap method.\n"
+							  "if METHOD = 'booster', BOOSTER (Lemoine et al., 2018, Nature; https://booster.pasteur.fr/) will be used. With large trees and moderate phylogenetic signal, BOOSTER tends to be more informative than the standard Felsenstein bootstrap method.",
+						metavar	= "METHOD",
+						type	= "choice",
+						choices	= ["booster", "sumtrees"],
+	)
+	DendrogramConstructionGroup.add_option(	'--Bootstrap_N_CPUs',
+						dest	= "Bootstrap_N_CPUs",
+						default	= multiprocessing.cpu_count(),
+						help	= "Number of threads (CPUs) to use in tree summary. Only used when 'Bootstrap_method' == 'booster' [default: %default - all threads]",
+						metavar	= "THREADS",
+						type	= "int",
+						action	= "callback",
+						callback= check_POSINTEGER,
+	)
+	parser.add_option_group(DendrogramConstructionGroup)
+	
+	HeatmapConstructionGroup = optparse.OptionGroup(	parser		= parser,
+								title		= "Heatmap construction options",
+								description	= "GRAViTy can generate a heatmap (with the dendrogram) to represent the pairwise (dis)similarity matrix")
+	HeatmapConstructionGroup.add_option(	'--Heatmap',
+						dest	= "Heatmap",
+						default	= False,
+						help	= "Construct (dis)similarity heatmap if True. [default: %default]",
+						metavar	= "BOOLEAN",
+						type	= "choice",
+						choices	= ["True", "False",],
+	)
+	HeatmapConstructionGroup.add_option(	'--Heatmap_VirusOrderScheme',
+						dest	= "Heatmap_VirusOrderScheme",
+						default	= None,
+						help	= "Full path to the virus order file. The indices of the genome entries start from 0 [default: %default].",
+						metavar	= "FILEPATH",
+						type	= "string",
+						action	= "callback",
+						callback= check_FILEPATH,
+	)
+	
+	HeatmapConstructionGroup.add_option(	'--Heatmap_WithDendrogram',
+						dest	= "Heatmap_WithDendrogram",
+						default	= True,
+						help	= "Construct (dis)similarity heatmap with dendrogram if True. [default: %default]",
+						metavar	= "BOOLEAN",
+						type	= "choice",
+						choices	= ["True", "False",],
+	)
+	HeatmapConstructionGroup.add_option(	'--Heatmap_DendrogramFile',
+						dest	= "Heatmap_DendrogramFile",
+						default	= None,
+						help	= "Full path to the dendrogram file. If 'None', the dendrogram will be estimated by GRAViTy [default: %default]",
+						metavar = "FILE",
+						type	= "string",
+						action	= "callback",
+						callback= check_FILEPATH,
+	)
+	HeatmapConstructionGroup.add_option(	'--Heatmap_DendrogramSupport_Cutoff',
+						dest	= "Heatmap_DendrogramSupport_Cutoff",
+						default	= 0.75,
+						help	= "Threshold for the BOOTSTRAP SUPPORT to be shown on the dendrogram on the heatmap. [default: %default]",
+						metavar	= "BOOTSTRAP SUPPORT",
+						type	= "float",
+						action	= "callback",
+						callback= check_PROB,
+	)
+	parser.add_option_group(HeatmapConstructionGroup)
+	
+	VirusGroupingGroup = optparse.OptionGroup(	parser		= parser,
+							title		= "Virus grouping options",
+							description	= "GRAViTy can estimate the distance cutoff that best separates the input reference taxonomic groupings, and report virus groups suggested by the estimated cutoff. "
+									  "Theil's uncertainty correlation for the reference taxonomic grouping given the predicted grouping, and vice versa, are reported. "
+									  "Symmetrical Theil's uncertainty correlation between the reference and predicted taxonomic grouping are also reported.")
+	VirusGroupingGroup.add_option(	'--VirusGrouping',
+					dest	= "VirusGrouping",
+					default	= True,
+					help	= "Perform virus grouping if True. [default: %default]",
+					metavar	= "BOOLEAN",
+					type	= "choice",
+					choices	= ["True", "False",],
+	)
+	parser.add_option_group(VirusGroupingGroup)
+	
+	options, arguments = parser.parse_args()
+	
+	print "Input for GRAViTyDendrogramAndHeatmapConstruction:"
+	print "="*100
+	print "Main input"
+	print "-"*50
+	print "ShelveDir: %s"				%options.ShelveDir
+	print "IncludeIncompleteGenomes: %s"		%options.IncludeIncompleteGenomes
+	
+	print "\n"
+	print "Virus (dis)similarity measurement options"
+	print "-"*50
+	print "SimilarityMeasurementScheme: %s"		%options.SimilarityMeasurementScheme
+	print "p: %s"					%options.p
+	
+	print "\n"
+	print "Dendrogram construction options"
+	print "-"*50
+	print "Dendrogram: %s"				%options.Dendrogram
+	print "Dendrogram_LinkageMethod: %s"		%options.Dendrogram_LinkageMethod
+	
+	print "Bootstrap: %s"				%options.Bootstrap
+	print "N_Bootstrap: %s"				%options.N_Bootstrap
+	print "Bootstrap_method: %s"			%options.Bootstrap_method
+	print "Bootstrap_N_CPUs: %s"			%options.Bootstrap_N_CPUs
+	
+	print "\n"
+	print "Heatmap construction options"
+	print "-"*50
+	print "Heatmap: %s"				%options.Heatmap
+	print "Heatmap_VirusOrderScheme: %s"		%options.Heatmap_VirusOrderScheme
+	
+	print "Heatmap_WithDendrogram: %s"		%options.Heatmap_WithDendrogram
+	print "Heatmap_DendrogramFile: %s"		%options.Heatmap_DendrogramFile
+	print "Heatmap_DendrogramSupport_Cutoff: %s"	%options.Heatmap_DendrogramSupport_Cutoff
+	
+	print "\n"
+	print "Virus grouping options"
+	print "-"*50
+	print "VirusGrouping: %s"%options.VirusGrouping
+	print "="*100
+	
+	GRAViTyDendrogramAndHeatmapConstruction (
+		ShelveDir = options.ShelveDir,
+		IncludeIncompleteGenomes = str2bool(options.IncludeIncompleteGenomes),
+		
+		SimilarityMeasurementScheme = options.SimilarityMeasurementScheme,
+		p = options.p,
+
+		Dendrogram = str2bool(options.Dendrogram),
+		Dendrogram_LinkageMethod = options.Dendrogram_LinkageMethod,
+
+		Bootstrap = str2bool(options.Bootstrap),
+		N_Bootstrap = options.N_Bootstrap,
+		Bootstrap_method = options.Bootstrap_method,
+		Bootstrap_N_CPUs = options.Bootstrap_N_CPUs,
+
+		Heatmap = str2bool(options.Heatmap),
+		Heatmap_VirusOrderScheme = options.Heatmap_VirusOrderScheme,
+
+		Heatmap_WithDendrogram = str2bool(options.Heatmap_WithDendrogram),
+		Heatmap_DendrogramFile = options.Heatmap_DendrogramFile,
+		Heatmap_DendrogramSupport_Cutoff = options.Heatmap_DendrogramSupport_Cutoff,
+
+		VirusGrouping = str2bool(options.VirusGrouping),
+		)
+
+if __name__ == '__main__':
+	main()
+

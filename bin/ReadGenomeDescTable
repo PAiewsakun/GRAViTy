@@ -1,0 +1,163 @@
+#!/usr/bin/env python2.7
+from GRAViTy.ReadGenomeDescTable import ReadGenomeDescTable
+from GRAViTy.Utilities.CheckInput import check_FILEPATH
+
+import optparse, os
+
+import textwrap
+class IndentedHelpFormatterWithNL(optparse.IndentedHelpFormatter):
+	def format_description(self, description):
+		if not description: return ""
+		desc_width = self.width - self.current_indent
+		indent = " "*self.current_indent
+		# the above is still the same
+		bits = description.split('\n')
+		formatted_bits = [
+			textwrap.fill(bit,
+				desc_width,
+				initial_indent=indent,
+				subsequent_indent=indent)
+			for bit in bits]
+		result = "\n".join(formatted_bits) + "\n"
+		return result
+	
+	def format_option(self, option):
+		# The help for each option consists of two parts:
+		#	 * the opt strings and metavars
+		#	 eg. ("-x", or "-fFILENAME, --file=FILENAME")
+		#	 * the user-supplied help string
+		#	 eg. ("turn on expert mode", "read data from FILENAME")
+		#
+		# If possible, we write both of these on the same line:
+		#	 -x		turn on expert mode
+		#
+		# But if the opt string list is too long, we put the help
+		# string on a second line, indented to the same column it would
+		# start in if it fit on the first line.
+		#	 -fFILENAME, --file=FILENAME
+		#			 read data from FILENAME
+		result = []
+		opts = self.option_strings[option]
+		opt_width = self.help_position - self.current_indent - 2
+		if len(opts) > opt_width:
+			opts = "%*s%s\n" % (self.current_indent, "", opts)
+			indent_first = self.help_position
+		else: # start help on same line as opts
+			opts = "%*s%-*s	" % (self.current_indent, "", opt_width, opts)
+			indent_first = 0
+		result.append(opts)
+		if option.help:
+			help_text = self.expand_default(option)
+			# Everything is the same up through here
+			help_lines = []
+			for para in help_text.split("\n"):
+				help_lines.extend(textwrap.wrap(para, self.help_width))
+			# Everything is the same after here
+			result.append("%*s%s\n" % (
+				indent_first, "", help_lines[0]))
+			result.extend(["%*s%s\n" % (self.help_position, "", line)
+				for line in help_lines[1:]])
+		elif opts[-1] != "\n":
+			result.append("\n")
+		return "".join(result)
+
+def main():
+	parser = optparse.OptionParser(	usage = "usage: %prog [options]",
+					version = "%prog 1.1.0",
+					formatter = IndentedHelpFormatterWithNL())
+	
+	parser.add_option(	'--GenomeDescTableFile',
+				dest 	= "GenomeDescTableFile",
+				help 	= "Full path to the Virus Metadata Resource (VMR) tab delimited file, wth headers."
+					  "VMR can be downloaded from https://talk.ictvonline.org/taxonomy/vmr/",
+				metavar	= "FILEPATH",
+				type	= "string",
+				action	= "callback",
+				callback= check_FILEPATH,
+	)
+	parser.add_option(	'--ShelveDir',
+				dest	= "ShelveDir",
+				help	= "Full path to the shelve directory, storing GRAViTy outputs.",
+				metavar	= "DIRECTORYPATH",
+				type	= "string",
+	)
+	parser.add_option(	'--Database',
+				dest	= "Database",
+				default	= None,
+				help	= "GRAViTy will only analyse genomes that are labelled with DATABASE in the database column. "
+					  "The database column can be specified by the DATABASE HEADER argument. "
+					  "If 'None', all entries are analysed. [default: %default]",
+				metavar	= "DATABASE",
+				type	= "string",
+	)
+	parser.add_option(	'--Database_Header',
+				dest	= "Database_Header",
+				default	= None,
+				help	= "The header of the database column. "
+					  "Cannot be 'None' if DATABASE is given. [default: %default]",
+				metavar	= "DATABASE COLUMN HEADER",
+				type	= "string",
+	)
+	parser.add_option(	'--TaxoGrouping_Header',
+				dest	= "TaxoGrouping_Header",
+				default	= "Family",
+				help	= "The header of the Taxonomic grouping column. [default: %default]",
+				metavar	= "TAXOGROUPING COLUMN HEADER",
+				type	= "string",
+	)
+	parser.add_option(	'--TaxoGroupingFile',
+				dest 	= "TaxoGroupingFile",
+				default	= None,
+				help 	= "It is possible that the user might want to associate different viruses with different taxonomic assignment levels, "
+					  "e.g. family assignments for some viruses, and subfamily or genus assignments for some other viruses, etc. "
+					  "To accomodate this need, the user can either add a column in the VMR file, and use --TaxoGrouping_Header to specify the column (see --TaxoGrouping_Header). "
+					  "Alternatively, the user can provide a file (with no header) that contains a single column of taxonomic groupings for all viruses in the order that appears in the VMR file. "
+					  "The user can specify the full path to the taxonomic grouping file using this options. "
+					  "If this option is used, it will override the one specified by --TaxoGrouping_Header. [default: %default]"
+				metavar	= "FILEPATH",
+				type	= "string",
+				action	= "callback",
+				callback= check_FILEPATH,
+	)
+	
+	options, arguments = parser.parse_args()
+	
+	print "Input for ReadGenomeDescTable:"
+	print "="*100
+	
+	print "\n"
+	print "Main input"
+	print "-"*50
+	print "GenomeDescTableFile: %s"	%options.GenomeDescTableFile
+	print "ShelveDir: %s"		%options.ShelveDir
+	print "Database: %s"		%options.Database
+	print "Database_Header: %s"	%options.Database_Header
+	print "TaxoGrouping_Header: %s"	%options.TaxoGrouping_Header
+	print "TaxoGroupingFile: %s"	%options.TaxoGroupingFile
+	print "="*100
+	
+	if (options.Database != None and options.Database_Header == None):
+		raise optparse.OptionValueError("You have specified DATABASE as %s, 'Database_Header' cannot be 'None'"%options.Database)
+	
+	if (options.Database == None and options.Database_Header != None):
+		Proceed = raw_input ("You have specified 'Database_Header' as %s, but 'Database' is 'None'. GRAViTy will analyse all genomes. Do you want to proceed? [Y/n]: " %options.Database_Header)
+		if Proceed != "Y":
+			raise SystemExit("GRAViTy terminated.")
+	
+	if not os.path.exists(options.ShelveDir):
+		os.makedirs(options.ShelveDir)
+	
+	ReadGenomeDescTable(
+		GenomeDescTableFile	= options.GenomeDescTableFile,
+		ShelveDir		= options.ShelveDir,
+		Database		= options.Database,
+		Database_Header		= options.Database_Header,
+		TaxoGrouping_Header	= options.TaxoGrouping_Header,
+		TaxoGroupingFile	= options.TaxoGroupingFile,
+		)
+
+if __name__ == '__main__':
+	main()
+
+
+

@@ -1,47 +1,165 @@
-GRAViTy - Genome Relationships Applied to Virus Taxonomy
-============================================
+GRAViTy 1.1.0
+-------------
 
-:Author:	Pakorn Aiewsakun,
-	Peter Simmonds
-:Emails:	pakorn.aiewsakun@gmail.com,
-	peter.simmonds@ndm.ox.ac.uk
+INSTALLATION
+=====================================================================
+Execute the command "sudo pip install ." in the GRAViTy directory that contains the "setup.py" file. All dependencies should be installed for you. Note that this is an ALPHA version of the program, meaning that this collection of scripts likely contains a lot of bugs, and it is still under development… and hence the following disclaimer.
 
-.. contents ::
+DISCLAIMER
+=====================================================================
+The material embodied in this software is provided to you "as-is", “with all faults”, and without warranty of any kind, express, implied or otherwise, including without limitation, any warranty of fitness for a particular purpose, warranty of non-infringement, or warranties of any kind concerning the safety, suitability, lack of viruses, inaccuracies, or other harmful components of this software. There are inherent dangers in the use of any software, and you are solely responsible for determining whether this software is compatible with your equipment and other software installed on your equipment. You are also solely responsible for the protection of your equipment and backup of your data, and the developers/providers will not be liable for any damages you may suffer in connection with using, modifying, or distributing this software. Without limiting the foregoing, the developers/providers make no warranty that:
+-	the software will meet your requirements
+-	the software will be uninterrupted, timely, secure, or error-free
+-	the results that may be obtained from the use of the software will be effective, accurate, or reliable
+-	the quality of the software will meet your expectations
+-	any errors in the software will be corrected.
 
-Introduction
-------------
-This is a collection of python scripts that we used to infer virus relationships from their whole genomes. The degrees of relatedness among viruses are estimated from the similarity in their gene collection and genomic organisation. We also sought to determine whether the existing eukaryotic virus taxonomy could be reproduced through the extraction of these genomic features. We termed this process "Genome Relationships Applied to Virus Taxonomy" or GRAViTy. We also examined the ability of GRAViTy framework to correctly differentiate assigned (known) viruses from the unassigned (unknown) ones, and if it can classify known viruses into correct taxonomic group at the family level. The study was reported in [1].
+Software and its documentation made available here:
+-	could include technical or other mistakes, inaccuracies, or typographical errors. The developers/providers may make changes to the software or documentation made available here
+-	may be out of date, and the developers/providers make no commitment to update such materials.
 
-There are two main pipelines. The first one - Pipeline_ConstructingGRAViTYClfs.py - is to determine the degrees of relatedness among reference viruses for each of the Baltimore classification groups. There are 7 Baltimore groups intotal - Group I: viruses with double-stranded DNA (dsDNA) genomes, Group II: viruses with single-stranded DNA (ssDNA) genomes, Group III: viruses with double-stranded RNA (dsRNA) genomes, Group IV: viruses with single-stranded RNA (ssRNA) genomes with sense orientation of genes, Group V: viruses with ssRNA genomes with antisense orientation of genes, Group VI: viruses with ssRNA genomes with reverse transcription of a dsDNA replication intermediate, and Group VII: viruses with dsDNA genomes with a ssRNA replication intermediate. In the study, we combined Groups VI and Group VII together as their members show substantial protein similarities. This pipeline can be broken down into 3 steps.
+The developers/providers assume no responsibility for errors or omissions in the software or documentation available from here.
 
-The first step is to read the genome description table GenomeDesc.txt, and extract viruses' taxonomic assignments and sequence identifiers, i.e. accession numbers. This information will be used in the downstreme process indexing virus genomes, and this step is performed by GenomeDesc.py.
+In no event shall the developers/providers be liable to you or anyone else for any direct, special, incidental, indirect, or consequential damages of any kind, or any damages whatsoever, including without limitation, loss of data, loss of profit, loss of use, savings or revenue, or the claims of third parties, whether or not the developers/providers have been advised of the possibility of such damages and loss, however caused, and on any theory of liability, arising out of or in connection with the possession, use, or performance of this software.
 
-The next step is to extract protein sequences from the virus genomes, cluster the sequences based on all-versus-all BLASTp bit scores by using Markov Clustering algorithm, align protein sequences within each of the clusters by using MUSCLE, and then turn them into protein profile Hidden Markov models (PPHMMs) by using HMMER. All of these steps are performed by HMMDBconstruction.py.
+The use of this software is done at your own discretion and risk and with agreement that you will be solely responsible for any damage to your computer system or loss of data that results from such activities. No advice or information, whether oral or written, obtained by you from the developers/providers shall create any warranty for the software.
 
-The last step is to scan reference viruses against the PPHMM database to determine what genes they have, and where the genes are. The presence and absence of genes are not recorded in binaries but weighted by the HMM scores. We called each of these records a PPHMM signature. The data of the gene locations are subsequently used to build genomic organisation models (GOMs) for each of the reference virus families. A GOM is simply a matrix with each row being a list of gene locations. The gene location profiles of reference viruses are then scanned against the GOM database to estimate the degrees of their genomic organisation similarity to various taxonomic groups. We call these GOM signatures. In this study, instead of a molecular sequence, each virus is represented by a PPHMM signature and a GOM signature, and this step was done by FeatureValueTableConsturction.py.
+Running GRAViTy 
+=====================================================================
+Two main programs are implemented in GRAViTy: GRAViTy_Pipeline_I and GRAViTy_Pipeline_II. In summary, GRAViTy_Pipeline_I is used construct reference PPHMM and GOM databases, and GRAViTy_Pipeline_II is used to identify and classify your viruses.
 
-Pipeline_ConstructingGRAViTYClfs.py also produces a pair-wise similarity heat map (DataSum_CGJHeatmap.py), determines what genomic features are predictive of virus taxonomy (DataSum_MICalculator.Overall.WithResampling.py), and constructs an UPGMA dendrogram from the pair-wise disimilarity matrix, as well as bootstraps the dendrogram (DataSum_TreeBoostrapping.py). A similarity between two viruses are measured by using the composite generalised Jaccard (CGJ) similarity index. Briefly, for a pair of viruses, two generalised Jaccard scores are computed: one for their PPHMM signatures, the other one for their GOM signatures. Their CGJ similarity, J, is simply a geometric mean of the two scores, which ranges in value between 0 (no detectable similarity) and 1 (sequence identity). The degree of dissimilarity between the two viruses is 1-J.
+GRAViTy_Pipeline_I
+=====================================================================
+Usage
+-----
+GRAViTy_Pipeline_I \
+--GenomeDescTableFile		"/PATH/TO/virus_description_table" \
+--ShelveDir			"/PATH/TO/OUTPUT_DIR" \
+--Database				"DATABASE" \
+--Database_Header		"DATABASE_HEADER" \
+--TaxoGrouping_Header		"TaxoGrouping_Header" \
+--GenomeSeqFile			"/PATH/TO/SEQ" \
+--N_Bootstrap			"INT"
 
-The second pipeline - Pipeline_UseGRAViTyToClassifyViruses.py - is for classifying viruses.
+Option descriptions
+-------------------
+--GenomeDescTableFile = Path to your virus description table. It should be a tab delimited file (.txt), with headers. We recommend using the VMR file by the ICTV as a template. An excel version of VMR can be downloaded from https://talk.ictvonline.org/taxonomy/vmr/. The file should contain at least all of the following columns: "Baltimore Group", "Order", "Family", "Subfamily", "Genus", "Virus name (s)", "Virus GENBANK accession", "Virus sequence complete", and "Genetic code table". 
 
-Again, the pipeline first reads the genome description table of the virus queries to extract their sequence identifiers by using GenomeDesc.py. The taxonomic assignments for the viruses may be blank. The pipeline will then passes their genomes to Annotator.py - the annotator - which produces PPHMM and GOM signatures for virus queries using the PPHMM and GOM databases. Lastly, it will then passes these information to ClassifierAndEvaluator.py to propose taxonomic candidates. A UPGMA dendrogram and a similarity acceptance cut-off for each virus family are also estimated in this part of the pipeline from the pairwise similarity scores, and used to evaluate the taxonomic candidates. Note that since Pipeline_ConstructingGRAViTYClfs.py is designed to apply to each Baltimore group separately (see above), we end up with 6 separate pipelines of virus classification, and those showing best matches are the finalised taxonomic assignments.
+--ShelveDir = Path to a directory that stores all GRAViTy outputs. This is where the PPHMM and GOM databases are stored, together with other outputs. 
 
-Dependencies
-------------
-The following python packages are required to run the scripts:
-	- NumPy
-	- SciPy
-	- Matplotlib
-	- Biopython
-	- scikit-learn
-	- dendropy
+--Database = GRAViTy will analyse only those that are labelled with DATABASE in the database column in the virus description table. The database column can be specified by using the “--Database_Header” option. If 'none', all entries are analysed. [default: none]
 
-In addition, you will also need the following programs to run the scripts:
-	- BLAST
-	- mcl
-	- muscle
-	- hmmer
+--Database_Header = The header of the database column. Cannot be none if DATABASE is specified. [default: none]
 
-Reference
----------
-1. Aiewsakun, P. & Simmonds P. (in press) The genomic underpinnings of eukaryotic virus taxonomy; creating a sequence-based framework for family-level virus classification. BMC Microbiome.
+--TaxoGrouping_Header = The header of Taxonomic grouping column. Since GRAViTy mainly focuses on the family taxonomic assignment, the default value is “Family”. 
+
+--TaxoGroupingFile = It is possible that the user might want to associate different viruses with different taxonomic assignment levels – family assignments for some, but subfamily or genus assignments for others, for example. To accommodate this, the user can either add a taxonomic grouping column in the virus description table, and use --TaxoGrouping_Header option to specify the column (see --TaxoGrouping_Header). Alternatively, the user can provide a file (with no header) that contains a single column of taxonomic groupings for all viruses in the order that appears in the description table. The user can specify the path to the file using this option. If this option is used, it will override the one specified by --TaxoGrouping_Header. [default: none]
+
+--GenomeSeqFile = Path to the genome sequence file in the GenBank format (*.gb). If the file doesn't exist, GRAViTy will download one for you from the NCBI database using the accession numbers specified in the “Virus GENBANK accession” column in the description table.
+
+--N_Bootstrap = "INT" is the number of bootstrap resampling [default: 10].
+
+For more options, use GRAViTy_Pipeline_I --help. 
+
+Output descriptions
+-------------------
+Outputs are organised into three directories. 
+-	BLAST directory contains files generated during the all-versus-all BLASTp analyses and protein multiple sequence alignments. 
+-	HMMER directory contains the PPHMM database. 
+-	Shelves directory contains several key outputs. 
+	o	“*.shelve” are files that keep python objects generated by GRAViTy, so don’t worry about them.
+	o	PPHMMandGOMsignatures.txt contains the PPHMM and GOM signatures.
+	o	HeatmapWithDendrogram.*.pdf is the heatmap depicted together with the dendrogram generated by GRAViTy.
+	o	Dendrogram.*.nwk is the dendrogram generated by GRAViTy in the newick format, estimated based on complete pairwise CGJ distances.
+	o	DendrogramDist.*.nwk contains the distribution of the bootstrapped resampled dendrograms. 
+	o	BootstrappedDendrogram.*.nwk is the dendrogram but with bootstrap clade support values. 
+	o	VirusGrouping.*.txt provide virus groupings that are based on the CGJ distance cutoff that best separates the reference taxonomic groupings overall. Various Theil's uncertainty correlations are reported. These statistics can be used to evaluate the similarity between the reference virus groupings and the groupings suggested by GRAViTy.
+	o	MutualInformationScore directory contains mutual information scores between (various schemes of) taxonomic groupings and values of PPHMM scores to determine which PPHMMs are highly (or weakly) correlated with the virus taxonomic scheme(s). The default grouping scheme (the Overall scheme) is the one as specified in the Taxonomic grouping column in the description table. If you want to examine other schemes, see --VirusGroupingSchemesFile option using --help.
+
+EXAMPLE
+-------
+GRAViTy_Pipeline_I \
+--GenomeDescTableFile		"/Test/Data/Ref/VMR_Test_Ref.txt" \
+--ShelveDir			"/Test/Analysis/Ref/VI" \
+--Database				"VI" \
+--Database_Header		"Baltimore Group" \
+--TaxoGrouping_Header		"Taxonomic grouping" \
+--N_Bootstrap			10 \
+--GenomeSeqFile			"/Test/Data/Ref/GenomeSeqs.VI.gb"
+
+This command analyses reference viruses, whose descriptions are in "/Test/Data/Ref/VMR_Test_Ref.txt". GRAViTy will only perform analysis on viruses labelled “VI” in the “Baltimore Group” column in the virus description table. The assigned taxonomic grouping is provided in the “Taxonomic grouping” column. The associated GenBank file is automatically downloaded by GRAViTy, if not present in the computer, stored at "/Test/Data/Ref/GenomeSeqs.VI.gb". Bootstrapping analysis is to be performed with N = 10. The results will be stored at "/Test/Analysis/Ref/VI".
+
+GRAViTy_Pipeline_II
+=====================================================================
+Usage
+-----
+GRAViTy_Pipeline_II \
+--GenomeDescTableFile_UcfVirus	"/PATH/TO/virus_description_table" \
+--ShelveDir_UcfVirus			"/PATH/TO/OUTPUT_DIR" \
+--ShelveDirs_RefVirus			"/PATH/TO/REF_DIR_I, /PATH/TO/REF_DIR_II, …" \
+--GenomeSeqFile_UcfVirus		"/PATH/TO/SEQ" \
+--UseUcfVirusPPHMMs			"BOOLEAN" \
+--GenomeSeqFiles_RefVirus		"/PATH/TO/REF_SEQ_I, /PATH/TO/REF_SEQ_II, …" \
+--N_Bootstrap				"INT"
+
+Option descriptions
+-------------------
+--GenomeDescTableFile_UcfVirus = Path to the description table of your viruses. It should be a tab delimited file (.txt), with headers. The file should contain at least all of the following columns: "Baltimore Group", "Order", "Family", "Subfamily", "Genus", "Virus name (s)", "Virus GENBANK accession", "Virus sequence complete", and "Genetic code table". 
+
+--ShelveDir_UcfVirus = Path to a directory that stores all GRAViTy outputs.
+
+--ShelveDirs_RefVirus = Path(s) to the shelve director(y/ies) of reference virus(es).
+
+--GenomeSeqFile_UcfVirus = Path to the genome sequences of your viruses in the GenBank format (*.gb). Their sequence identifiers should match those in the “Virus GENBANK accession” column in the description table.
+
+--UseUcfVirusPPHMMs = Annotate reference and unclassified viruses using the PPHMM database derived from unclassified viruses if True. [default: True]
+
+--GenomeSeqFiles_RefVirus = Path(s) to the genome sequence GenBank file(s) of reference viruses. This cannot be 'None' if --UseUcfVirusPPHMMs = True.
+
+--N_Bootstrap = "INT" is the number of bootstrap resampling [default: 10].
+
+For more options, use GRAViTy_Pipeline_I --help. 
+
+Output descriptions
+-------------------
+Outputs are organised into three directories. 
+-	BLAST directory contains files generated during the all-versus-all BLASTp analyses and protein multiple sequence alignments. This folder will be generated only when UseUcfVirusPPHMMs is True.
+-	HMMER directory contains the PPHMM database. This folder will be generated only when UseUcfVirusPPHMMs is True.
+-	Shelves directory contains several key outputs. 
+	o	“*.shelve” are files that keep python objects generated by GRAViTy, so don’t worry about them.
+	o	HeatmapWithDendrogram.*.pdf is the heatmap depicted together with the dendrogram generated by GRAViTy. If multiple reference databases are used, multiple HeatmapWithDendrogram.*.pdf files will be generated.
+	o	Dendrogram.*.nwk is the dendrogram generated by GRAViTy in the newick format, estimated based on complete pairwise CGJ distances. If multiple reference databases are used, multiple Dendrogram.*.nwk files will be generated.
+	o	DendrogramDist.*.nwk contains the distribution of the bootstrapped resampled dendrograms. If multiple reference databases are used, multiple DendrogramDist.*.nwk files will be generated.
+	o	BootstrappedDendrogram.*.nwk is the dendrogram but with bootstrap clade support values. If multiple reference databases are used, multiple BootstrappedDendrogram.*.nwk files will be generated.
+	o	VirusGrouping.*.txt provide virus groupings that are based on the CGJ distance cutoff that best separates the reference taxonomic groupings overall. Various Theil's uncertainty correlations are reported. These statistics can be used to evaluate the similarity between the reference virus groupings and the groupings suggested by GRAViTy. If multiple reference databases are used, multiple VirusGrouping.*.nwk files will be generated.
+	o	ClassificationResults.txt provides the results of virus identification and classification. This file contains lots of information. Here are brief explanations.
+		§	Candidate class (class of the best match reference virus): This column shows candidate taxonomic assignment, transferred from the most similar reference virus.
+		§	Similarity score: This column shows the CGJ similarity score to the best match reference virus. The similarity score cut-offs for each of the reference virus taxonomic groups are shown below the table.
+		§	Support from dendrogram: This column summaries how each of your viruses is related to the proposed taxonomic group. 
+			·	NA: the sequence is not similar enough to any of the reference sequences
+			·	1: the sequence is embedded within the clade of the candidate taxonomic group
+			·	2: the sequence has a sister relationship with the candidate taxonomic group and they are similar enough
+			·	3: the sequence is 'sandwished' between 2 branches of the candidate taxonomic group
+			·	4: the sequence has a paraphyletic relationship with the candidate taxonomic group (just inside)
+			·	5: the sequence has a paraphyletic relationship with the candidate taxonomic group (just outside)
+			·	6: the candidate taxonomic group is not supported by the dendrogram
+		§	Evaluated taxonomic assignment: This column tells you if the candidate taxonomic assignment passes the evaluation criteria or not. If not, it will be labelled “Unclassified”.
+		§	Best taxonomic assignment: This column tells you the best taxonomic assignment. This is particularly relevant when you use multiple reference GRAViTy databases to analyse your viruses, since there are possibilities that a virus might be assigned to multiple taxonomic groups belonging to different databases. In such cases, the finalised taxonomic assignment is the one associated with the highest CGJ similarity score. In the case of “Unclassified virus”, this column tells you if your virus exhibits similarity to any viruses at all or not. If so, GRAViTy will attempt to tell which database it might belong to even though it cannot be assigned to any specific virus group.
+		§	Provisional virus taxonomy: This column tells you the final virus taxonomic groupings. For viruses that can be identified, the provisional virus taxonomic assignment will be the same as the best taxonomic assignment. For unclassified viruses, GRAViTy will attempt to group them together based on the CGJ distance cutoff that best separates the reference taxonomic groupings overall. 
+
+		§	Note that if multiple reference databases are used, there will be results, one from each reference database. If bootstrapping technique is used to evaluate the uncertainties of the assignments, the distributions of the scores will also be shown.
+
+Example
+-------
+GRAViTy_Pipeline_II \
+--GenomeDescTableFile_UcfVirus		"Test/Data/Ucf/VMR_test_Ucf.txt" \
+--ShelveDir_UcfVirus				"Test/Analysis/Ucf/Test_ucf_UseUcfPPHMMs" \
+--ShelveDirs_RefVirus				"Test/Analysis/Ref/VI, Test/Analysis/Ref/VII" \
+--GenomeSeqFile_UcfVirus			"Test/Data/Ucf/GenomeSeqs.test_Ucf.gb" \
+--GenomeSeqFiles_RefVirus			"Test/Data/Ref/GenomeSeqs.VI.gb, Test/Data/Ref/GenomeSeqs.VII.gb" \
+--UseUcfVirusPPHMMs				True \
+--N_Bootstrap					10 
+
+This command will analyse your viruses, whose descriptions are in "Test/Data/Ucf/VMR_test_Ucf.txt", and keeps the results at "Test/Analysis/Ucf/Test_ucf_UseUcfPPHMMs". GRAViTy will find the genomes of your viruses at "Test/Data/Ucf/GenomeSeqs.test_Ucf.gb". Two reference GRAViTy databases are used, one at "Test/Analysis/Ref/VI" and the other at "Test/Analysis/Ref/VII". Since UseUcfVirusPPHMMs is True, GRAViTy will update the virus annotations (i.e. the PPHMM and GOM signatures) of both the reference and your viruses by using the PPHMM database derived from your viruses. The genomes of reference viruses can be found at "Test/Data/Ref/GenomeSeqs.VI.gb", and "Test/Data/Ref/GenomeSeqs.VII.gb". Bootstrapping analysis is to be performed with N = 10.
+
+

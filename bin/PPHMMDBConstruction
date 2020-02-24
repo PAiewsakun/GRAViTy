@@ -1,0 +1,371 @@
+#!/usr/bin/env python2.7
+from GRAViTy.PPHMMDBConstruction import PPHMMDBConstruction
+from GRAViTy.Utilities.str2bool import str2bool
+from GRAViTy.Utilities.CheckInput import check_PERCENT, check_PROB, check_POS, check_POSINTEGER, check_NONNEGINTEGER, check_NONPOS, check_N_AlignmentMerging
+import optparse, os, multiprocessing
+
+import textwrap
+class IndentedHelpFormatterWithNL(optparse.IndentedHelpFormatter):
+	def format_description(self, description):
+		if not description: return ""
+		desc_width = self.width - self.current_indent
+		indent = " "*self.current_indent
+		# the above is still the same
+		bits = description.split('\n')
+		formatted_bits = [
+			textwrap.fill(bit,
+				desc_width,
+				initial_indent=indent,
+				subsequent_indent=indent)
+			for bit in bits]
+		result = "\n".join(formatted_bits) + "\n"
+		return result
+	
+	def format_option(self, option):
+		# The help for each option consists of two parts:
+		#	 * the opt strings and metavars
+		#	 eg. ("-x", or "-fFILENAME, --file=FILENAME")
+		#	 * the user-supplied help string
+		#	 eg. ("turn on expert mode", "read data from FILENAME")
+		#
+		# If possible, we write both of these on the same line:
+		#	 -x		turn on expert mode
+		#
+		# But if the opt string list is too long, we put the help
+		# string on a second line, indented to the same column it would
+		# start in if it fit on the first line.
+		#	 -fFILENAME, --file=FILENAME
+		#			 read data from FILENAME
+		result = []
+		opts = self.option_strings[option]
+		opt_width = self.help_position - self.current_indent - 2
+		if len(opts) > opt_width:
+			opts = "%*s%s\n" % (self.current_indent, "", opts)
+			indent_first = self.help_position
+		else: # start help on same line as opts
+			opts = "%*s%-*s	" % (self.current_indent, "", opt_width, opts)
+			indent_first = 0
+		result.append(opts)
+		if option.help:
+			help_text = self.expand_default(option)
+			# Everything is the same up through here
+			help_lines = []
+			for para in help_text.split("\n"):
+				help_lines.extend(textwrap.wrap(para, self.help_width))
+			# Everything is the same after here
+			result.append("%*s%s\n" % (
+				indent_first, "", help_lines[0]))
+			result.extend(["%*s%s\n" % (self.help_position, "", line)
+				for line in help_lines[1:]])
+		elif opts[-1] != "\n":
+			result.append("\n")
+		return "".join(result)
+
+def main():
+	parser = optparse.OptionParser(	usage = "usage: %prog [options]",
+					version = "%prog 1.1.0",
+					formatter = IndentedHelpFormatterWithNL())
+	
+	parser.add_option(	'--GenomeSeqFile',
+				dest	= "GenomeSeqFile",
+				help	= "Full path to the genome sequence GenBank file."
+					  "If the file doesn't exist, GRAViTy will download the sequences from the NCBI database using accession numbers specified in the VMR file, 'Virus GENBANK accession' column",
+				metavar	= "FILEPATH",
+				type	= "string",
+	)
+	parser.add_option(	'--ShelveDir',
+				dest	= "ShelveDir",
+				help	= "Full path to the shelve directory, storing GRAViTy outputs.",
+				metavar	= "DIRECTORYPATH",
+				type	= "string",
+	)
+	
+	ProtExtractionGroup 	= optparse.OptionGroup(	parser		= parser,
+							title		= "Protein extraction options",
+							description	= "Protein sequences are extracted from the genome sequence GenBank File. "
+									  "If the file contains protein sequences, GRAViTy will use those annotations. "
+									  "Otherwise, protein sequences will be inferred using the genetic code specified in the VMR file, 'Genetic code table' column")
+	ProtExtractionGroup.add_option(	'--ProteinLength_Cutoff',
+					dest	= "ProteinLength_Cutoff",
+					default	= 100,
+					help	= "Proteins with length < LENGTH aa will be ignored [default: %default]",
+					metavar	= "LENGTH",
+					type	= "int",
+					action	= "callback",
+					callback= check_NONNEGINTEGER,
+	)
+	ProtExtractionGroup.add_option(	'--IncludeProteinsFromIncompleteGenomes',
+					dest	= "IncludeProteinsFromIncompleteGenomes",
+					default	= True,
+					help	= "Include protein sequences from incomplete genomes to the database if True. [default: %default]",
+					metavar	= "BOOLEAN",
+					type	= "choice",
+					choices	= ["True", "False",],
+	)
+	parser.add_option_group(ProtExtractionGroup)
+	
+	ProtClusteringGroup	= optparse.OptionGroup( parser		= parser,
+							title		= "Protein clustering options",
+							description	= "Protein sequences are clustered based on ALL-VERSUS-ALL BLASTp hit scores. "
+									  "In summary, a protein database is constructed, and all protein sequences (queries) are searched against the database one by one using BLASTp. "
+									  "Protein-protein pairwise similarity scores (bit scores) are collected, and subsequently used for protein clustering by the MCL algorithm. "
+									  "Sequneces in each cluster are then aligned by using MUSCLE, and turned into a protein profile hidden Markov model (PPHMM).")
+	ProtClusteringGroup.add_option(	'--BLASTp_evalue_Cutoff',
+					dest	= "BLASTp_evalue_Cutoff",
+					default	= 1E-3,
+					help	= "Threshold for protein sequence similarity detection. "
+						  "A hit with an E-value > E-VALUE will be ignored. [default: %default]",
+					metavar	= "E-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	ProtClusteringGroup.add_option(	'--BLASTp_PercentageIden_Cutoff',
+					dest	= "BLASTp_PercentageIden_Cutoff",
+					default	= 50,
+					help	= "Threshold for protein sequence similarity detection. "
+						  "A hit with a percentage identity < PERCENTAGE IDENTITY will be ignored [default: %default]",
+					metavar	= "PERCENTAGE IDENTITY",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	ProtClusteringGroup.add_option(	'--BLASTp_QueryCoverage_Cutoff',
+					dest	= "BLASTp_QueryCoverage_Cutoff",
+					default	= 75,
+					help	= "Threshold for protein sequence similarity detection. "
+						  "A hit with a query coverage < COVERAGE will be ignored [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	ProtClusteringGroup.add_option(	'--BLASTp_SubjectCoverage_Cutoff',
+					dest	= "BLASTp_SubjectCoverage_Cutoff",
+					default	= 75,
+					help	= "Threshold for protein sequence similarity detection. "
+						  "A hit with a subject coverage < COVERAGE will be ignored [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	ProtClusteringGroup.add_option(	'--BLASTp_num_alignments',
+					dest	= "BLASTp_num_alignments",
+					default	= 1000000,
+					help	= "Maximum number of sequences to be considered in a BLASTp search. [default: %default]",
+					metavar	= "BLAST ALIGNMENT NUMBER",
+					type	= "int",
+					action	= "callback",
+					callback= check_POSINTEGER,
+	)
+	ProtClusteringGroup.add_option(	'--BLASTp_N_CPUs',
+					dest	= "BLASTp_N_CPUs",
+					default	= multiprocessing.cpu_count(),
+					help	= "The number of threads (CPUs) to use in the BLASTp search. [default: %default - all threads]",
+					metavar	= "THREADS",
+					type	= "int",
+					action	= "callback",
+					callback= check_POSINTEGER,
+	)
+	
+	ProtClusteringGroup.add_option(	'--MUSCLE_GapOpenCost',
+					dest	= "MUSCLE_GapOpenCost",
+					default	= -3.0,
+					help	= "MUSCLE gap opening panelty for aligning protein sequences. [default: %default]",
+					metavar	= "gap opening panelty",
+					type	= "float",
+					action	= "callback",
+					callback= check_NONPOS,
+	)
+	ProtClusteringGroup.add_option(	'--MUSCLE_GapExtendCost',
+					dest	= "MUSCLE_GapExtendCost",
+					default	= -0.00,
+					help	= "MUSCLE gap extension panelty for aligning protein sequences. [default: %default]",
+					metavar	= "gap extension panelty",
+					type	= "float",
+					action	= "callback",
+					callback= check_NONPOS,
+	)
+	
+	ProtClusteringGroup.add_option(	'--ProtClustering_MCLInflation',
+					dest	= "ProtClustering_MCLInflation",
+					default	= 2,
+					help	= "Cluster granularity. Increasing INFLATION will increase cluster granularity. [default: %default]",
+					metavar	= "INFLATION",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	
+	parser.add_option_group(ProtClusteringGroup)
+	
+	MergingProtAlnsGroup	= optparse.OptionGroup( parser		= parser,
+							title		= "Protein alignment merging options",
+							description	= "Protein alignments can be merged to reduce the number of protein profile hidden markov models (PPHMMs) in the PPHMM database. "
+									  "In summary, a database of PPHMMs is constructed, and all PPHMMs (queries) are searched against the database one by one using HHsuite (hhsearch). "
+									  "PPHMM-PPHMM pairwise similarity scores are collected, and subsequently used for PPHMM clustering by MCL algorithm. "
+									  "Sequneces in the same PPHMM cluster are then re-aligned using MUSCLE.")
+	MergingProtAlnsGroup.add_option('--N_AlignmentMerging',
+					dest	= "N_AlignmentMerging",
+					default	= 0,
+					help	= "Number of rounds of alignment merging. ROUND == 0 means no merging. ROUND == -1 means merging until exhausted. [default: %default]",
+					metavar	= "ROUND",
+					type	= "int",
+					action	= "callback",
+					callback= check_N_AlignmentMerging,
+	)
+	
+	MergingProtAlnsGroup.add_option('--HHsuite_evalue_Cutoff',
+					dest	= "HHsuite_evalue_Cutoff",
+					default	= 1E-6,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with an E-value > E-VALUE will be ignored. [default: %default]",
+					metavar = "E-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	MergingProtAlnsGroup.add_option('--HHsuite_pvalue_Cutoff',
+					dest	= "HHsuite_pvalue_Cutoff",
+					default	= 0.05,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a p-value > P-VALUE will be ignored. [default: %default]",
+					metavar	= "P-VALUE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PROB,
+	)
+	MergingProtAlnsGroup.add_option('--HHsuite_N_CPUs',
+					dest	= "HHsuite_N_CPUs",
+					default	= multiprocessing.cpu_count(),
+					help	= "Number of threads (CPUs) to use in the hhsearch search. [default: %default - all threads]",
+					metavar	= "THREADS",
+					type	= "int",
+					action	= "callback",
+					callback= check_POSINTEGER,
+	)
+	MergingProtAlnsGroup.add_option('--HHsuite_QueryCoverage_Cutoff',
+					dest	= "HHsuite_QueryCoverage_Cutoff",
+					default	= 85,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a query coverage < COVERAGE will be ignored [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	MergingProtAlnsGroup.add_option('--HHsuite_SubjectCoverage_Cutoff',
+					dest	= "HHsuite_SubjectCoverage_Cutoff",
+					default	= 85,
+					help	= "Threshold for PPHMM similarity detection. "
+						  "A hit with a subject coverage < COVERAGE will be ignored [default: %default]",
+					metavar	= "COVERAGE",
+					type	= "float",
+					action	= "callback",
+					callback= check_PERCENT,
+	)
+	
+	MergingProtAlnsGroup.add_option('--PPHMMClustering_MCLInflation',
+					dest	= "PPHMMClustering_MCLInflation",
+					default	= 5,
+					help	= "Cluster granularity. Increasing INFLATION will increase cluster granularity. [default: %default]",
+					metavar	= "INFLATION",
+					type	= "float",
+					action	= "callback",
+					callback= check_POS,
+	)
+	
+	MergingProtAlnsGroup.add_option('--HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging',
+					dest	= "HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging",
+					default	= True,
+					help	= "Make a HMMER PPHMM DB for each round of protein merging if True. [default: %default]",
+					metavar	= "BOOLEAN",
+					type	= "choice",
+					choices	= ["True", "False",],
+	)
+	parser.add_option_group(MergingProtAlnsGroup)
+	
+	options, arguments = parser.parse_args()
+	
+	print "Input for PPHMMDBConstruction:"
+	print "="*100
+	print "Main input"
+	print "-"*50
+	print "GenomeSeqFile: %s"		%options.GenomeSeqFile
+	print "ShelveDir: %s"			%options.ShelveDir
+	
+	print "\n"
+	print "Protein extraction options"
+	print "-"*50
+	print "ProteinLength_Cutoff: %s"	%options.ProteinLength_Cutoff
+	print "IncludeProteinsFromIncompleteGenomes: %s"	%options.IncludeProteinsFromIncompleteGenomes
+	
+	print "\n"
+	print "Protein clustering options"
+	print "-"*50
+	print "BLASTp_evalue_Cutoff: %s"	%options.BLASTp_evalue_Cutoff
+	print "BLASTp_PercentageIden_Cutoff: %s"%options.BLASTp_PercentageIden_Cutoff
+	print "BLASTp_QueryCoverage_Cutoff: %s"	%options.BLASTp_QueryCoverage_Cutoff
+	print "BLASTp_SubjectCoverage_Cutoff: %s"%options.BLASTp_SubjectCoverage_Cutoff
+	print "BLASTp_num_alignments: %s"	%options.BLASTp_num_alignments
+	print "BLASTp_N_CPUs: %s"		%options.BLASTp_N_CPUs
+	
+	print "MUSCLE_GapOpenCost: %s"		%options.MUSCLE_GapOpenCost
+	print "MUSCLE_GapExtendCost: %s"	%options.MUSCLE_GapExtendCost
+	
+	print "ProtClustering_MCLInflation: %s"%options.ProtClustering_MCLInflation
+	
+	print "\n"
+	print "Protein alignment merging options"
+	print "-"*50
+	print "N_AlignmentMerging: %s"		%options.N_AlignmentMerging
+	
+	print "HHsuite_evalue_Cutoff: %s"	%options.HHsuite_evalue_Cutoff
+	print "HHsuite_pvalue_Cutoff: %s"	%options.HHsuite_pvalue_Cutoff
+	print "HHsuite_N_CPUs: %s"		%options.HHsuite_N_CPUs
+	print "HHsuite_QueryCoverage_Cutoff: %s"%options.HHsuite_QueryCoverage_Cutoff
+	print "HHsuite_SubjectCoverage_Cutoff: %s"%options.HHsuite_SubjectCoverage_Cutoff
+	
+	print "PPHMMClustering_MCLInflation: %s"%options.PPHMMClustering_MCLInflation
+	
+	print "HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging: %s"%options.HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging
+	print "="*100
+	
+	PPHMMDBConstruction (
+		GenomeSeqFile = options.GenomeSeqFile,
+		ShelveDir = options.ShelveDir,
+		
+		ProteinLength_Cutoff = options.ProteinLength_Cutoff,
+		IncludeIncompleteGenomes = str2bool(options.IncludeProteinsFromIncompleteGenomes),
+		
+		BLASTp_evalue_Cutoff = options.BLASTp_evalue_Cutoff,
+		BLASTp_PercentageIden_Cutoff = options.BLASTp_PercentageIden_Cutoff,
+		BLASTp_QueryCoverage_Cutoff = options.BLASTp_QueryCoverage_Cutoff,
+		BLASTp_SubjectCoverage_Cutoff = options.BLASTp_SubjectCoverage_Cutoff,
+		BLASTp_num_alignments = options.BLASTp_num_alignments,
+		BLASTp_N_CPUs = options.BLASTp_N_CPUs,
+		
+		MUSCLE_GapOpenCost = options.MUSCLE_GapOpenCost,
+		MUSCLE_GapExtendCost = options.MUSCLE_GapExtendCost,
+		
+		ProtClustering_MCLInflation = options.ProtClustering_MCLInflation,
+		
+		N_AlignmentMerging = options.N_AlignmentMerging,
+		
+		HHsuite_evalue_Cutoff = options.HHsuite_evalue_Cutoff,
+		HHsuite_pvalue_Cutoff = options.HHsuite_pvalue_Cutoff,
+		HHsuite_N_CPUs = options.HHsuite_N_CPUs,
+		HHsuite_QueryCoverage_Cutoff = options.HHsuite_QueryCoverage_Cutoff,
+		HHsuite_SubjectCoverage_Cutoff = options.HHsuite_SubjectCoverage_Cutoff,
+		
+		PPHMMClustering_MCLInflation = options.PPHMMClustering_MCLInflation,
+		
+		HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging = str2bool(options.HMMER_PPHMMDB_ForEachRoundOfPPHMMMerging),
+		)
+
+if __name__ == '__main__':
+	main()
+
+
+
