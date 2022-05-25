@@ -42,7 +42,7 @@ setup(	name = 'GRAViTy',
 	],
 	#dependency_links = ['http://github.com/user/repo/tarball/master#egg = package-1.0'],
 	install_requires = [
-		'Biopython',
+		'Biopython<=1.76',
 		'numpy',
 		'ete3',
 		'matplotlib',
