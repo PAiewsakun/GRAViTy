@@ -566,7 +566,7 @@ def PPHMMDBConstruction (
 	print "- Cluster protein sequences based on BLASTp bit scores, using the MCL algorithm"
 	################################################################################
 	_ = subprocess.Popen("mcl %s --abc -o %s -I %s" %(BLASTBitScoreFile, BLASTProtClusterFile, ProtClustering_MCLInflation), stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
-	err, out = _.communicate()
+	out, err  = _.communicate()
 	if err != "":
 		print "Something is wrong with mcl:"
 		print "#"*50+"out"+"#"*50
@@ -623,7 +623,7 @@ def PPHMMDBConstruction (
 													MUSCLE_GapOpenCost,
 													MUSCLE_GapExtendCost),
 													stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
-			err, out = _.communicate()
+			out, err = _.communicate()
 			if err != "":
 				print "Something is wrong with muscle (Cluster_%s):"%Cluster_i
 				print "#"*50+"out"+"#"*50
@@ -862,7 +862,7 @@ def PPHMMDBConstruction (
 								_ = subprocess.Popen("muscle -in %s -out %s -refine" %(	ClusterFile_i,
 															ClusterFile_i),
 															stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
-								err, out = _.communicate()
+								out, err = _.communicate()
 								break
 							PPHMM_i, PPHMM_j = sorted([int(m.group(1)),int(m.group(2))])
 							PPHMMTreeNewick = re.sub(r"\((\d+),(\d+)\)", str(PPHMM_i), PPHMMTreeNewick, count=1)
@@ -876,7 +876,7 @@ def PPHMMDBConstruction (
 																			MUSCLE_GapOpenCost,
 																			MUSCLE_GapExtendCost),
 																			stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
-							err, out = _.communicate()
+							out, err = _.communicate()
 							_ = subprocess.Popen("rm %s %s" %(ClusterFile_j, HHsuite_PPHMMFile_j), stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
 							out, err = _.communicate()
 							
